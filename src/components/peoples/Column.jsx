@@ -70,9 +70,6 @@ const ColumnDisplay = ({isDragging, columnRef, column, headerRef, cardListRef}) 
                     ))}
                 </div>
             </div>
-            {/* {closestEdge && (
-                <DropIndicator edge={closestEdge} />
-            )} */}
         </div>
     );
 }
