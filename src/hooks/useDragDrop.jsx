@@ -12,6 +12,7 @@ import {
 import { autoScrollForElements } from "@atlaskit/pragmatic-drag-and-drop-auto-scroll/element"
 import { reorderWithEdge } from "@atlaskit/pragmatic-drag-and-drop-hitbox/util/reorder-with-edge";
 import invariant from "tiny-invariant";
+import { dropTargetForExternal, monitorForExternal } from '@atlaskit/pragmatic-drag-and-drop/external/adapter';
 
 
 /*
@@ -23,7 +24,15 @@ import invariant from "tiny-invariant";
     }
 */
 
-export const useDragDrop = (ref, itemId, type, allowedEdges) => {
+const externalDragPayload = 'application/x.card';
+
+const isDraggingExternalCard = ({source})=> {
+    if(source.types.includes(externalDragPayload)) return true;
+    return false;
+}
+
+
+export const useDragDrop = ({ref, itemId, parentId, type, allowedEdges}) => {
     const [closestEdge, setClosestEdge] = useState(null);
     const [isDragging, setIsDragging] = useState(false);
     const { data, setData } = useData();
@@ -49,26 +58,32 @@ export const useDragDrop = (ref, itemId, type, allowedEdges) => {
             draggable({
                 element: ref.current,
                 getInitialData: () => {
-                    // if(type === 'single') return { type: type, itemId: itemId };
-                    // else return { type: type, itemId: itemId, parentId: parentId };
                     return { type: type, itemId: itemId };
                 },
-                // onGenerateDragPreview: ({nativeSetDragImage, location, source}) =>{
-                //     const data = source.data;
-                //     invariant(data);
-                //     setCustomNativeDragPreview({
-                //         nativeSetDragImage,
-                //         getOffset: preserveOffsetOnSource({element: ref.current, input: location.current.input}),
-                //         render({container}){
-                //             setPreview({
-                //                 container,
-                //             })
-                //         }
-                //     })
-                // },
-
+                getInitialDataForExternal: () => {
+                    localStorage.removeItem(externalDragPayload);
+                    if(type === 'card'){
+                        if(parentId){
+                            const obj = {
+                                itemId,
+                                parentId
+                            }
+                            localStorage.setItem(externalDragPayload, JSON.stringify(obj));
+                        }
+                        return{
+                            [externalDragPayload]: itemId,
+                            ['text/plain']: itemId,
+                        }
+                    }
+                },
                 onDragStart: () => setIsDragging(true),
-                onDrop: () => setIsDragging(false),
+                onDrop: () => {
+                    setIsDragging(false);
+                    
+                    // else {
+                    //     localStorage.setItem(externalDragPayload, itemId);
+                    // }
+                }
             }),
             autoScrollForElements({
                 element: ref.current,
@@ -76,15 +91,42 @@ export const useDragDrop = (ref, itemId, type, allowedEdges) => {
                     maxScrollSpeed: 'fast'
                 })
             }),
+            dropTargetForExternal({
+                element: ref.current,
+                canDrop: isDraggingExternalCard,
+                getDropEffect: () => 'move',
+                getIsSticky: () => true,
+                getData: ({input, element}) => {
+                    const dt = { type: type, itemId: itemId };
+                    return attachClosestEdge(dt, {
+                        input,
+                        element,
+                        allowedEdges: allowedEdges
+                    })
+                },
+                onDragEnter: args => {
+                    if(args.self.data.type === 'card'){
+                        setClosestEdge(extractClosestEdge(args.self.data))
+                    }
+                },
+                onDrag: args => {
+                    if(args.self.data.type === 'card'){
+                        setClosestEdge(extractClosestEdge(args.self.data))
+                    }
+                },
+                onDragLeave: () => {
+                    setClosestEdge(null);
+                },
+                onDrop: (args) => {
+                    setClosestEdge(null);
+                },
+            }),
             dropTargetForElements({
                 element: ref.current,
                 canDrop: (args) => args.source.data.type === 'card' || args.source.data.type === 'column',
                 getIsSticky: () => true,
                 getData: ({ input, element }) => {
-                    // const dt = type === 'single'? 
-                    //     { type: type, itemId: itemId } 
-                    //     : { type: type, itemId: itemId, parentId: parentId };
-                    const dt = { type: type, itemId: itemId } ;
+                    const dt = { type: type, itemId: itemId };
 
                     return attachClosestEdge(dt, {
                         input,
@@ -111,6 +153,48 @@ export const useDragDrop = (ref, itemId, type, allowedEdges) => {
 
     useEffect(() => {
         return combine(
+            monitorForExternal({
+                canMonitor: isDraggingExternalCard,
+                onDrop({location}){
+                    const source = JSON.parse(localStorage.getItem(externalDragPayload));
+                    const target = location.current.dropTargets[0].data;
+                    const targetColumnId = location.current.dropTargets[1].data.itemId;
+                    
+                    const sourceColumn = data.columnMap[source.parentId];
+                    const targetColumn = data.columnMap[targetColumnId];
+                    const sourceList = sourceColumn.items;
+                    const targetList = targetColumn.items;
+
+                    const sourceCard = sourceList.find((item) => item.itemId === source.itemId);
+                    const updateSourceList = sourceList.filter((item) => item.itemId !== source.itemId);
+                    // console.log(sourceColumn);
+                    // targetList.push(sourceCard);
+                    const closestEdgeOfTarget = extractClosestEdge(target);
+                    const updateTargetList = [...targetList, sourceCard];
+                    const targetIndex = updateTargetList.findIndex((val) => val.itemId === target.itemId);
+                    const reorderTargetList = reorderWithEdge({
+                        list: updateTargetList,
+                        startIndex: updateTargetList.length - 1,
+                        closestEdgeOfTarget: closestEdgeOfTarget,
+                        indexOfTarget: targetIndex,
+                        axis: 'vertical'
+                    })
+
+                    const updateMap = {
+                        ...data.columnMap,
+                        [targetColumn.columnId]: {
+                            ...targetColumn,
+                            items: reorderTargetList
+                        },
+                        [sourceColumn.columnId]: {
+                            ...sourceColumn,
+                            items: updateSourceList
+                        }
+                    }
+
+                    setData({ ...data, columnMap: updateMap });
+                }
+            }),
             monitorForElements({
                 onDrop(args) {
                     const { location, source } = args;
@@ -118,19 +202,6 @@ export const useDragDrop = (ref, itemId, type, allowedEdges) => {
                     if (location.current.dropTargets.length === 0) {
                         return;
                     }
-                    
-                    // if(source.data.type === "single"){
-                    //     const sourceData = source.data;
-                    //     const targetData = location.current.dropTargets[0]?.data;
-                    //     if(!targetData) return;
-                    //     if(sourceData.parentId !== targetData.parentId) return;
-
-                    //     const closestTargetEdge = extractClosestEdge(targetData);
-                    //     callback({sourceData, targetData})
-                    // }
-                    // else {
-
-                    // }
                     
                     if (source.data.type === "column") {
                         const startIndex = data.orderedColumnIds.findIndex(
@@ -235,7 +306,7 @@ export const useDragDrop = (ref, itemId, type, allowedEdges) => {
                         }
                     }
                 }
-            })
+            }),
         )
     }, [data]);
 

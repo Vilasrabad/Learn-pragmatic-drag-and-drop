@@ -71,12 +71,13 @@ const CardShadow = () => {
 export const Card = memo(function Card({ item, columnId }) {
     const ref = useRef(null);
 
-    const { isDragging, closestEdge, preview } = useDragDrop(
+    const { isDragging, closestEdge, preview } = useDragDrop({
         ref, 
-        item.itemId, 
-        'card', 
-        ['top', 'bottom']
-    );
+        itemId: item.itemId,
+        parentId: columnId, 
+        type: 'card', 
+        allowedEdges: ['top', 'bottom']
+    });
 
     return (
         <>

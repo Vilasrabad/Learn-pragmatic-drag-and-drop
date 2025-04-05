@@ -90,7 +90,12 @@ export const Column = memo(function Column({ column }) {
 
     // const isDragging = false;
     // const closestEdge = '';
-    const { isDragging, closestEdge } = useDragDrop(columnRef, columnId, 'column', ['left', 'right']);
+    const { isDragging, closestEdge } = useDragDrop({
+        ref: columnRef,
+        itemId: columnId,
+        type: 'column',
+        allowedEdges: ['right', 'left']
+    });
 
     return (
         <>
